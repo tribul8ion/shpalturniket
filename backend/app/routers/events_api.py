@@ -1,8 +1,9 @@
 """
 API для управления мероприятиями
+Интеграция с сервисом категорий мероприятий
 """
 
-from typing import List
+from typing import List, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 from sqlmodel import Session, select
 
@@ -15,6 +16,7 @@ from ..models.event import (
     EventDeviceUpdate,
     EventCategoryWithDevices
 )
+from ..services.event_categories import event_category_service
 
 router = APIRouter()
 
@@ -22,27 +24,7 @@ router = APIRouter()
 async def get_event_categories(session: Session = Depends(get_session)):
     """Получить все категории мероприятий с устройствами"""
     try:
-        # Получаем все категории
-        categories = session.exec(select(EventCategory)).all()
-        
-        result = []
-        for category in categories:
-            # Получаем устройства для категории
-            devices = session.exec(
-                select(EventDevice).where(EventDevice.event_category_id == category.id)
-            ).all()
-            
-            enabled_count = sum(1 for device in devices if device.is_enabled)
-            
-            category_with_devices = EventCategoryWithDevices(
-                **category.dict(),
-                devices=devices,
-                enabled_devices_count=enabled_count,
-                total_devices_count=len(devices)
-            )
-            result.append(category_with_devices)
-        
-        return result
+        return await event_category_service.get_categories_with_devices(session)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка получения категорий: {e}")
 
@@ -53,22 +35,11 @@ async def create_event_category(
 ):
     """Создать новую категорию мероприятия"""
     try:
-        # Проверяем, что категория с таким именем не существует
-        existing = session.exec(
-            select(EventCategory).where(EventCategory.name == category_data.name)
-        ).first()
-        
-        if existing:
-            raise HTTPException(status_code=400, detail="Категория с таким именем уже существует")
-        
-        category = EventCategory(**category_data.dict())
-        session.add(category)
-        session.commit()
-        session.refresh(category)
-        
-        return category
-    except HTTPException:
-        raise
+        return await event_category_service.create_category(
+            session, category_data.name, category_data.description
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка создания категории: {e}")
 
@@ -80,22 +51,15 @@ async def update_event_category(
 ):
     """Обновить категорию мероприятия"""
     try:
-        category = session.get(EventCategory, category_id)
-        if not category:
-            raise HTTPException(status_code=404, detail="Категория не найдена")
-        
-        # Обновляем только переданные поля
         update_data = category_data.dict(exclude_unset=True)
-        for field, value in update_data.items():
-            setattr(category, field, value)
-        
-        session.add(category)
-        session.commit()
-        session.refresh(category)
-        
-        return category
-    except HTTPException:
-        raise
+        return await event_category_service.update_category(
+            session, category_id, 
+            name=update_data.get("name"),
+            description=update_data.get("description"),
+            is_active=update_data.get("is_active")
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "не найдена" in str(e) else 400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка обновления категории: {e}")
 
@@ -106,24 +70,10 @@ async def delete_event_category(
 ):
     """Удалить категорию мероприятия"""
     try:
-        category = session.get(EventCategory, category_id)
-        if not category:
-            raise HTTPException(status_code=404, detail="Категория не найдена")
-        
-        # Удаляем связанные устройства
-        devices = session.exec(
-            select(EventDevice).where(EventDevice.event_category_id == category_id)
-        ).all()
-        
-        for device in devices:
-            session.delete(device)
-        
-        session.delete(category)
-        session.commit()
-        
+        await event_category_service.delete_category(session, category_id)
         return {"message": "Категория удалена успешно"}
-    except HTTPException:
-        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка удаления категории: {e}")
 
@@ -156,32 +106,18 @@ async def add_devices_to_category(
 ):
     """Добавить/обновить устройства в категории мероприятия"""
     try:
-        category = session.get(EventCategory, category_id)
-        if not category:
-            raise HTTPException(status_code=404, detail="Категория не найдена")
+        # Преобразуем EventDeviceUpdate в словари
+        device_data = [
+            {"device_id": device.device_id, "is_enabled": device.is_enabled}
+            for device in device_updates
+        ]
         
-        # Удаляем существующие устройства категории
-        existing_devices = session.exec(
-            select(EventDevice).where(EventDevice.event_category_id == category_id)
-        ).all()
-        
-        for device in existing_devices:
-            session.delete(device)
-        
-        # Добавляем новые устройства
-        for device_update in device_updates:
-            event_device = EventDevice(
-                event_category_id=category_id,
-                device_id=device_update.device_id,
-                is_enabled=device_update.is_enabled
-            )
-            session.add(event_device)
-        
-        session.commit()
-        
-        return {"message": f"Добавлено {len(device_updates)} устройств в категорию"}
-    except HTTPException:
-        raise
+        count = await event_category_service.update_category_devices(
+            session, category_id, device_data
+        )
+        return {"message": f"Добавлено {count} устройств в категорию"}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка добавления устройств: {e}")
 
@@ -189,30 +125,57 @@ async def add_devices_to_category(
 async def get_available_devices():
     """Получить список всех доступных устройств из конфигурации"""
     try:
-        import json
-        from pathlib import Path
-        
-        # Читаем IP_list.json из каталога backend
-        BASE_DIR = Path(__file__).parent.parent.parent
-        ip_list_path = BASE_DIR / "IP_list.json"
-        
-        if not ip_list_path.exists():
-            return {"devices": []}
-        
-        with open(ip_list_path, 'r', encoding='utf-8') as f:
-            ip_data = json.load(f)
-        
-        devices = []
-        for device_id, device_info in ip_data.items():
-            if len(device_info) >= 3:
-                ip, description, enabled = device_info[0], device_info[1], bool(int(device_info[2]))
-                devices.append({
-                    "device_id": device_id,
-                    "ip": ip,
-                    "description": description,
-                    "enabled": enabled
-                })
-        
+        devices = event_category_service._load_available_devices()
         return {"devices": devices}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка получения устройств: {e}")
+
+@router.get("/categories/{category_id}/statistics", summary="Получить статистику категории")
+async def get_category_statistics(
+    category_id: int,
+    session: Session = Depends(get_session)
+):
+    """Получить детальную статистику по категории мероприятия"""
+    try:
+        return await event_category_service.get_category_statistics(session, category_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка получения статистики: {e}")
+
+@router.post("/categories/{category_id}/monitoring/start", summary="Запустить мониторинг категории")
+async def start_category_monitoring(
+    category_id: int,
+    session: Session = Depends(get_session)
+):
+    """Запустить мониторинг устройств категории"""
+    try:
+        success = await event_category_service.start_category_monitoring(session, category_id)
+        if success:
+            return {"message": "Мониторинг категории запущен успешно", "success": True}
+        else:
+            return {"message": "Не удалось запустить мониторинг категории", "success": False}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка запуска мониторинга: {e}")
+
+@router.post("/categories/{category_id}/monitoring/stop", summary="Остановить мониторинг категории")
+async def stop_category_monitoring(
+    category_id: int
+):
+    """Остановить мониторинг устройств категории"""
+    try:
+        success = await event_category_service.stop_category_monitoring(category_id)
+        if success:
+            return {"message": "Мониторинг категории остановлен успешно", "success": True}
+        else:
+            return {"message": "Категория не была под мониторингом", "success": False}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка остановки мониторинга: {e}")
+
+@router.get("/monitoring/status", summary="Получить статус мониторинга категорий")
+async def get_categories_monitoring_status():
+    """Получить статус мониторинга всех активных категорий"""
+    try:
+        return event_category_service.get_active_categories_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка получения статуса: {e}")

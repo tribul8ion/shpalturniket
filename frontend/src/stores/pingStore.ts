@@ -5,7 +5,7 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { deviceApi, pingApi, telegramApi, configApi, eventStream, eventsApi, type Device, type DeviceStats, type TelegramStatus, type DeviceConfig, type BotConfig, type EventCategory, type EventCategoryWithDevices, type EventDevice, type EventCategoryCreate, type EventDeviceUpdate } from '@/api/pingApi'
+import { deviceApi, pingApi, telegramApi, configApi, eventStream, eventsApi, monitoringApi, type Device, type DeviceStats, type TelegramStatus, type DeviceConfig, type BotConfig, type EventCategory, type EventCategoryWithDevices, type EventDevice, type EventCategoryCreate, type EventDeviceUpdate } from '@/api/pingApi'
 import { useNotifications } from '@/composables/useNotifications'
 
 export const usePingStore = defineStore('ping', () => {
@@ -54,6 +54,12 @@ export const usePingStore = defineStore('ping', () => {
   const eventCategories = ref<EventCategoryWithDevices[]>([])
   const availableDevices = ref<DeviceConfig[]>([])
   const eventsLoading = ref(false)
+
+  // ============= Состояние мониторинга =============
+  
+  const monitoringStatus = ref<any>({})
+  const monitoringLoading = ref(false)
+  const isMonitoringActive = ref(false)
 
   // ============= Computed свойства =============
 
@@ -464,6 +470,112 @@ export const usePingStore = defineStore('ping', () => {
     }
   }
 
+  // ============= Действия для мониторинга =============
+
+  // Загрузить статус мониторинга
+  async function loadMonitoringStatus() {
+    monitoringLoading.value = true
+    try {
+      monitoringStatus.value = await monitoringApi.getStatus()
+      isMonitoringActive.value = monitoringStatus.value.is_running || false
+    } catch (error) {
+      console.error('Ошибка загрузки статуса мониторинга:', error)
+      notifications.error('Ошибка загрузки', 'Не удалось загрузить статус мониторинга')
+    } finally {
+      monitoringLoading.value = false
+    }
+  }
+
+  // Запустить мониторинг
+  async function startMonitoring() {
+    monitoringLoading.value = true
+    try {
+      const result = await monitoringApi.start()
+      if (result.success) {
+        isMonitoringActive.value = true
+        await loadMonitoringStatus()
+        notifications.success('Мониторинг запущен', result.message)
+      } else {
+        notifications.error('Ошибка запуска', result.message)
+      }
+      return result
+    } catch (error) {
+      console.error('Ошибка запуска мониторинга:', error)
+      notifications.error('Ошибка запуска мониторинга', 'Не удалось запустить автоматический мониторинг')
+      throw error
+    } finally {
+      monitoringLoading.value = false
+    }
+  }
+
+  // Остановить мониторинг
+  async function stopMonitoring() {
+    monitoringLoading.value = true
+    try {
+      const result = await monitoringApi.stop()
+      if (result.success) {
+        isMonitoringActive.value = false
+        await loadMonitoringStatus()
+        notifications.success('Мониторинг остановлен', result.message)
+      } else {
+        notifications.error('Ошибка остановки', result.message)
+      }
+      return result
+    } catch (error) {
+      console.error('Ошибка остановки мониторинга:', error)
+      notifications.error('Ошибка остановки мониторинга', 'Не удалось остановить автоматический мониторинг')
+      throw error
+    } finally {
+      monitoringLoading.value = false
+    }
+  }
+
+  // Выполнить немедленный пинг
+  async function performImmediatePing() {
+    monitoringLoading.value = true
+    try {
+      const result = await monitoringApi.pingNow()
+      notifications.success('Пинг выполнен', `Проверено ${result.total_devices} устройств`)
+      
+      // Обновляем статистику устройств
+      if (result.results) {
+        result.results.forEach((pingResult: any) => {
+          const device = devices.value.find(d => d.device_id === pingResult.device_id)
+          if (device) {
+            device.status = pingResult.status as any
+            device.response_ms = pingResult.response_time
+            device.last_check = pingResult.timestamp
+          }
+        })
+      }
+      
+      return result
+    } catch (error) {
+      console.error('Ошибка выполнения пинга:', error)
+      notifications.error('Ошибка пинга', 'Не удалось выполнить немедленный пинг')
+      throw error
+    } finally {
+      monitoringLoading.value = false
+    }
+  }
+
+  // Перезагрузить конфигурацию мониторинга
+  async function reloadMonitoringConfig() {
+    try {
+      const result = await monitoringApi.reloadConfig()
+      if (result.success) {
+        await loadMonitoringStatus()
+        await loadDevices() // Перезагружаем устройства
+        notifications.success('Конфигурация перезагружена', result.message)
+      }
+      return result
+    } catch (error) {
+      console.error('Ошибка перезагрузки конфигурации:', error)
+      notifications.error('Ошибка перезагрузки', 'Не удалось перезагрузить конфигурацию')
+      throw error
+    }
+  }
+
   // ============= Действия для мероприятий =============
 
   // Загрузить категории мероприятий
@@ -563,6 +675,64 @@ export const usePingStore = defineStore('ping', () => {
     }
   }
 
+  // Получить статистику категории
+  async function getCategoryStatistics(categoryId: number) {
+    try {
+      return await eventsApi.getCategoryStatistics(categoryId)
+    } catch (error) {
+      console.error('Ошибка получения статистики категории:', error)
+      notifications.error('Ошибка загрузки', 'Не удалось загрузить статистику категории')
+      throw error
+    }
+  }
+
+  // Запустить мониторинг категории
+  async function startCategoryMonitoring(categoryId: number) {
+    try {
+      const result = await eventsApi.startCategoryMonitoring(categoryId)
+      if (result.success) {
+        await loadEventCategories() // Обновляем список категорий
+        notifications.success('Мониторинг категории запущен', result.message)
+      } else {
+        notifications.error('Ошибка запуска', result.message)
+      }
+      return result
+    } catch (error) {
+      console.error('Ошибка запуска мониторинга категории:', error)
+      notifications.error('Ошибка запуска', 'Не удалось запустить мониторинг категории')
+      throw error
+    }
+  }
+
+  // Остановить мониторинг категории
+  async function stopCategoryMonitoring(categoryId: number) {
+    try {
+      const result = await eventsApi.stopCategoryMonitoring(categoryId)
+      if (result.success) {
+        await loadEventCategories() // Обновляем список категорий
+        notifications.success('Мониторинг категории остановлен', result.message)
+      } else {
+        notifications.error('Ошибка остановки', result.message)
+      }
+      return result
+    } catch (error) {
+      console.error('Ошибка остановки мониторинга категории:', error)
+      notifications.error('Ошибка остановки', 'Не удалось остановить мониторинг категории')
+      throw error
+    }
+  }
+
+  // Получить статус мониторинга категорий
+  async function getCategoriesMonitoringStatus() {
+    try {
+      return await eventsApi.getCategoriesMonitoringStatus()
+    } catch (error) {
+      console.error('Ошибка получения статуса мониторинга категорий:', error)
+      notifications.error('Ошибка загрузки', 'Не удалось загрузить статус мониторинга категорий')
+      throw error
+    }
+  }
+
   // ============= Утилиты =============
 
   // Получить устройство по ID
@@ -598,6 +768,9 @@ export const usePingStore = defineStore('ping', () => {
       loadDevices(),
       loadTelegramStatus(),
       loadFullConfig(),
+      loadMonitoringStatus(),
+      loadEventCategories(),
+      loadAvailableDevices(),
     ])
     connectToEventStream()
   }
@@ -619,6 +792,9 @@ export const usePingStore = defineStore('ping', () => {
     eventCategories,
     availableDevices,
     eventsLoading,
+    monitoringStatus,
+    monitoringLoading,
+    isMonitoringActive,
 
     // Computed
     deviceStats,
@@ -657,6 +833,15 @@ export const usePingStore = defineStore('ping', () => {
     getCategoryDevices,
     addDevicesToCategory,
     loadAvailableDevices,
+    getCategoryStatistics,
+    startCategoryMonitoring,
+    stopCategoryMonitoring,
+    getCategoriesMonitoringStatus,
+    loadMonitoringStatus,
+    startMonitoring,
+    stopMonitoring,
+    performImmediatePing,
+    reloadMonitoringConfig,
     reset,
     initialize,
   }

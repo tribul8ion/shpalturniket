@@ -221,6 +221,68 @@ export const pingApi = {
   },
 }
 
+// ============= API функции для мониторинга =============
+
+export const monitoringApi = {
+  // Получить статус мониторинга
+  async getStatus(): Promise<any> {
+    try {
+      return await apiClient('/monitoring/status')
+    } catch (error) {
+      console.error('Ошибка получения статуса мониторинга:', error)
+      throw error
+    }
+  },
+
+  // Запустить мониторинг
+  async start(): Promise<{ message: string; success: boolean }> {
+    try {
+      return await apiClient('/monitoring/start', {
+        method: 'POST',
+      })
+    } catch (error) {
+      console.error('Ошибка запуска мониторинга:', error)
+      throw error
+    }
+  },
+
+  // Остановить мониторинг
+  async stop(): Promise<{ message: string; success: boolean }> {
+    try {
+      return await apiClient('/monitoring/stop', {
+        method: 'POST',
+      })
+    } catch (error) {
+      console.error('Ошибка остановки мониторинга:', error)
+      throw error
+    }
+  },
+
+  // Выполнить немедленный пинг
+  async pingNow(): Promise<any> {
+    try {
+      return await apiClient('/monitoring/ping-now', {
+        method: 'POST',
+      })
+    } catch (error) {
+      console.error('Ошибка выполнения пинга:', error)
+      throw error
+    }
+  },
+
+  // Перезагрузить конфигурацию
+  async reloadConfig(): Promise<{ message: string; success: boolean }> {
+    try {
+      return await apiClient('/monitoring/reload-config', {
+        method: 'POST',
+      })
+    } catch (error) {
+      console.error('Ошибка перезагрузки конфигурации:', error)
+      throw error
+    }
+  },
+}
+
 // ============= API функции для Telegram =============
 
 export const telegramApi = {
@@ -546,6 +608,50 @@ export const eventsApi = {
       return await apiClient('/events/devices/available')
     } catch (error) {
       console.error('Ошибка получения доступных устройств:', error)
+      throw error
+    }
+  },
+
+  // Получить статистику категории
+  async getCategoryStatistics(categoryId: number): Promise<any> {
+    try {
+      return await apiClient(`/events/categories/${categoryId}/statistics`)
+    } catch (error) {
+      console.error('Ошибка получения статистики категории:', error)
+      throw error
+    }
+  },
+
+  // Запустить мониторинг категории
+  async startCategoryMonitoring(categoryId: number): Promise<{ message: string; success: boolean }> {
+    try {
+      return await apiClient(`/events/categories/${categoryId}/monitoring/start`, {
+        method: 'POST'
+      })
+    } catch (error) {
+      console.error('Ошибка запуска мониторинга категории:', error)
+      throw error
+    }
+  },
+
+  // Остановить мониторинг категории
+  async stopCategoryMonitoring(categoryId: number): Promise<{ message: string; success: boolean }> {
+    try {
+      return await apiClient(`/events/categories/${categoryId}/monitoring/stop`, {
+        method: 'POST'
+      })
+    } catch (error) {
+      console.error('Ошибка остановки мониторинга категории:', error)
+      throw error
+    }
+  },
+
+  // Получить статус мониторинга категорий
+  async getCategoriesMonitoringStatus(): Promise<any> {
+    try {
+      return await apiClient('/events/monitoring/status')
+    } catch (error) {
+      console.error('Ошибка получения статуса мониторинга категорий:', error)
       throw error
     }
   },
