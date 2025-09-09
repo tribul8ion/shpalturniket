@@ -11,6 +11,7 @@ from .routers import config
 from .routers import bot
 from .routers import events_api
 from .core.db import create_db_and_tables
+from .utils.monitor import monitoring_service
 
 
 def create_app() -> FastAPI:
@@ -63,6 +64,24 @@ app = create_app()
 @app.on_event("startup")
 def on_startup():
     create_db_and_tables()
+    # Читаем интервал из config.json, если есть
+    try:
+        import json
+        from pathlib import Path
+        BASE_DIR = Path(__file__).parent.parent
+        cfg_path = BASE_DIR / "config.json"
+        interval = 30
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                interval = int(cfg.get("time_connect", interval))
+        monitoring_service.interval_seconds = max(5, int(interval))
+    except Exception:
+        pass
+    try:
+        monitoring_service.start()
+    except Exception as e:
+        print(f"Failed to start monitoring service: {e}")
 
 
 if __name__ == "__main__":

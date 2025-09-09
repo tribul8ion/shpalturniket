@@ -8,13 +8,15 @@ from sqlmodel import Session, select
 
 from ..core.db import get_session
 from ..models.event import (
-    EventCategory, 
-    EventDevice, 
-    EventCategoryCreate, 
+    EventCategory,
+    EventDevice,
+    EventCategoryCreate,
     EventCategoryUpdate,
     EventDeviceUpdate,
     EventCategoryWithDevices
 )
+from ..models.log import DeviceStatusLog
+from ..core.db import get_session
 
 router = APIRouter()
 
@@ -45,6 +47,63 @@ async def get_event_categories(session: Session = Depends(get_session)):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка получения категорий: {e}")
+
+
+@router.get("/history", summary="История статусов устройств (последние N)")
+async def get_status_history(limit: int = 200, session: Session = Depends(get_session)):
+    try:
+        # SQLite не поддерживает легко ORDER BY + LIMIT с SQLModel без сырых выражений,
+        # но sqlmodel/select поддерживает order_by
+        logs = session.exec(
+            select(DeviceStatusLog).order_by(DeviceStatusLog.created_at.desc()).limit(limit)
+        ).all()
+        # Преобразуем в простой список словарей
+        return [
+            {
+                "id": log.id,
+                "device_id": log.device_id,
+                "ip": log.ip,
+                "status": log.status,
+                "response_ms": log.response_ms,
+                "category": log.category,
+                "timestamp": log.created_at.isoformat(),
+            }
+            for log in logs
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка получения истории: {e}")
+
+
+@router.get("/stats/summary", summary="Сводная статистика по истории")
+async def get_stats_summary(hours: int = 24, session: Session = Depends(get_session)):
+    try:
+        from datetime import datetime, timedelta
+        since = datetime.utcnow() - timedelta(hours=hours)
+        logs = session.exec(
+            select(DeviceStatusLog).where(DeviceStatusLog.created_at >= since)
+        ).all()
+        total_checks = len(logs)
+        online = sum(1 for l in logs if l.status == "online")
+        offline = sum(1 for l in logs if l.status == "offline")
+        availability = round((online / total_checks * 100) if total_checks else 0, 1)
+        # Группировка по устройствам (последний статус)
+        last_by_device = {}
+        for l in logs:
+            if l.device_id not in last_by_device or last_by_device[l.device_id].created_at < l.created_at:
+                last_by_device[l.device_id] = l
+        current_online = sum(1 for l in last_by_device.values() if l.status == "online")
+        current_offline = sum(1 for l in last_by_device.values() if l.status == "offline")
+        return {
+            "window_hours": hours,
+            "total_checks": total_checks,
+            "online_checks": online,
+            "offline_checks": offline,
+            "availability_percentage": availability,
+            "current_online": current_online,
+            "current_offline": current_offline,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка вычисления статистики: {e}")
 
 @router.post("/categories", response_model=EventCategory, summary="Создать категорию мероприятия")
 async def create_event_category(

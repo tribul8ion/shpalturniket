@@ -18,6 +18,7 @@ def create_db_and_tables():
     from ..models.theme import ThemePreset
     from ..models.scenario import Scenario
     from ..models.event import EventCategory, EventDevice
+    from ..models.log import DeviceStatusLog
     
     # Создаем все таблицы
     SQLModel.metadata.create_all(engine)
