@@ -74,39 +74,49 @@ const analyticsStats = computed(() => {
 })
 
 const chartData = computed(() => {
-  // Данные для графиков на основе реальных данных
-  const devices = pingStore.devices
+  // Реальные данные из истории: агрегируем на фронтенде
+  const history = pingStore.recentEvents
   const now = new Date()
-  
-  // Генерируем данные за последние 24 часа
-  const hours = Array.from({ length: 24 }, (_, i) => {
-    const hour = new Date(now.getTime() - (23 - i) * 60 * 60 * 1000)
-    return hour.getHours()
+  const hours = Array.from({ length: 24 }, (_, i) => new Date(now.getTime() - (23 - i) * 3600000))
+
+  // Словари по часу
+  const checksByHour: Record<string, { total: number; online: number; offline: number; rtt: number; rttCount: number }> = {}
+  hours.forEach(h => {
+    const key = `${h.getFullYear()}-${h.getMonth()}-${h.getDate()} ${h.getHours()}`
+    checksByHour[key] = { total: 0, online: 0, offline: 0, rtt: 0, rttCount: 0 }
   })
 
-  const availabilityData = hours.map(hour => {
-    // Симуляция данных доступности (в реальности брать из истории)
-    const baseAvailability = analyticsStats.value.availabilityPercentage
-    const variation = (Math.random() - 0.5) * 10
-    return Math.max(0, Math.min(100, baseAvailability + variation))
+  // recentEvents хранит последние изменения; используем их как прокси истории
+  history.forEach(ev => {
+    const t = new Date(ev.timestamp || Date.now())
+    const key = `${t.getFullYear()}-${t.getMonth()}-${t.getDate()} ${t.getHours()}`
+    if (!checksByHour[key]) return
+    checksByHour[key].total += 1
+    if (ev.type === 'recovery') checksByHour[key].online += 1
+    if (ev.type === 'failure') checksByHour[key].offline += 1
+    if (typeof ev.response_ms === 'number') {
+      checksByHour[key].rtt += ev.response_ms
+      checksByHour[key].rttCount += 1
+    }
   })
 
-  const responseTimeData = hours.map(() => {
-    // Симуляция данных времени отклика
-    const baseTime = analyticsStats.value.averageResponseTime
-    const variation = (Math.random() - 0.5) * 20
-    return Math.max(0, baseTime + variation)
+  const labels = hours.map(h => `${h.getHours()}:00`)
+  const availabilityData = hours.map(h => {
+    const key = `${h.getFullYear()}-${h.getMonth()}-${h.getDate()} ${h.getHours()}`
+    const b = checksByHour[key]
+    if (!b || b.total === 0) return analyticsStats.value.availabilityPercentage
+    return Math.max(0, Math.min(100, (b.online / b.total) * 100))
+  })
+  const responseTimeData = hours.map(h => {
+    const key = `${h.getFullYear()}-${h.getMonth()}-${h.getDate()} ${h.getHours()}`
+    const b = checksByHour[key]
+    if (!b || b.rttCount === 0) return analyticsStats.value.averageResponseTime
+    return Math.round(b.rtt / b.rttCount)
   })
 
   return {
-    availability: {
-      labels: hours.map(h => `${h}:00`),
-      data: availabilityData
-    },
-    responseTime: {
-      labels: hours.map(h => `${h}:00`),
-      data: responseTimeData
-    }
+    availability: { labels, data: availabilityData },
+    responseTime: { labels, data: responseTimeData },
   }
 })
 

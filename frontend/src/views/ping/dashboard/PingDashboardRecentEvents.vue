@@ -85,13 +85,13 @@ onMounted(() => {
           </template>
 
           <VListItemTitle class="font-weight-medium">
-            {{ event.deviceName }}
+            {{ event.device }}
             <VChip
               size="x-small"
               variant="outlined"
               class="ml-2"
             >
-              {{ event.deviceIp }}
+              {{ event.ip }}
             </VChip>
           </VListItemTitle>
           
@@ -101,7 +101,7 @@ onMounted(() => {
 
           <template #append>
             <span class="text-caption text-medium-emphasis">
-              {{ event.timestamp }}
+              {{ new Date(event.timestamp).toLocaleString('ru-RU') }}
             </span>
           </template>
         </VListItem>

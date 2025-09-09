@@ -113,6 +113,16 @@ export interface EventStreamData {
   timestamp: string
 }
 
+export interface StatusLogEntry {
+  id: number
+  device_id: string
+  ip: string
+  status: string
+  response_ms?: number
+  category?: string
+  timestamp: string
+}
+
 // ============= API функции для устройств =============
 
 export const deviceApi = {
@@ -546,6 +556,34 @@ export const eventsApi = {
       return await apiClient('/events/devices/available')
     } catch (error) {
       console.error('Ошибка получения доступных устройств:', error)
+      throw error
+    }
+  },
+
+  // История статусов устройств
+  async getStatusHistory(limit = 200): Promise<StatusLogEntry[]> {
+    try {
+      return await apiClient(`/events/history?limit=${limit}`)
+    } catch (error) {
+      console.error('Ошибка получения истории статусов:', error)
+      throw error
+    }
+  },
+
+  // Сводная статистика по истории
+  async getStatsSummary(hours = 24): Promise<{
+    window_hours: number
+    total_checks: number
+    online_checks: number
+    offline_checks: number
+    availability_percentage: number
+    current_online: number
+    current_offline: number
+  }> {
+    try {
+      return await apiClient(`/events/stats/summary?hours=${hours}`)
+    } catch (error) {
+      console.error('Ошибка получения сводной статистики:', error)
       throw error
     }
   },

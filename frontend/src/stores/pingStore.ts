@@ -5,7 +5,7 @@
 
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { deviceApi, pingApi, telegramApi, configApi, eventStream, eventsApi, type Device, type DeviceStats, type TelegramStatus, type DeviceConfig, type BotConfig, type EventCategory, type EventCategoryWithDevices, type EventDevice, type EventCategoryCreate, type EventDeviceUpdate } from '@/api/pingApi'
+import { deviceApi, pingApi, telegramApi, configApi, eventStream, eventsApi, type Device, type DeviceStats, type TelegramStatus, type DeviceConfig, type BotConfig, type EventCategory, type EventCategoryWithDevices, type EventDevice, type EventCategoryCreate, type EventDeviceUpdate, type StatusLogEntry } from '@/api/pingApi'
 import { useNotifications } from '@/composables/useNotifications'
 
 export const usePingStore = defineStore('ping', () => {
@@ -36,7 +36,7 @@ export const usePingStore = defineStore('ping', () => {
 
   // ============= Состояние событий =============
   
-  const recentEvents = ref<any[]>([])
+  const recentEvents = ref<Array<{ id: string; type: 'recovery' | 'failure' | string; device: string; ip: string; message: string; timestamp: string; response_ms?: number }>>([])
   const isConnectedToEvents = ref(false)
 
   // ============= Состояние конфигурации =============
@@ -60,27 +60,21 @@ export const usePingStore = defineStore('ping', () => {
   // Статистика устройств
   const deviceStats = computed((): DeviceStats => {
     const total = devices.value.length
-    const online = devices.value.filter(d => d.status === 'online').length
-    const offline = devices.value.filter(d => d.status === 'offline').length
-    const warning = devices.value.filter(d => d.status === 'warning').length
+    const online = devices.value.filter((d: Device) => d.status === 'online').length
+    const offline = devices.value.filter((d: Device) => d.status === 'offline').length
+    const warning = devices.value.filter((d: Device) => d.status === 'warning').length
     
     return { total, online, offline, warning }
   })
 
   // Устройства онлайн
-  const onlineDevices = computed(() => 
-    devices.value.filter(d => d.status === 'online')
-  )
+  const onlineDevices = computed(() => devices.value.filter((d: Device) => d.status === 'online'))
 
   // Устройства офлайн
-  const offlineDevices = computed(() => 
-    devices.value.filter(d => d.status === 'offline')
-  )
+  const offlineDevices = computed(() => devices.value.filter((d: Device) => d.status === 'offline'))
 
   // Устройства с предупреждениями
-  const warningDevices = computed(() => 
-    devices.value.filter(d => d.status === 'warning')
-  )
+  const warningDevices = computed(() => devices.value.filter((d: Device) => d.status === 'warning'))
 
   // Процент доступности
   const availabilityPercentage = computed(() => {
@@ -92,11 +86,10 @@ export const usePingStore = defineStore('ping', () => {
   // Среднее время отклика
   const averageResponseTime = computed(() => {
     const responseTimes = devices.value
-      .filter(d => d.status === 'online' && d.response_ms)
-      .map(d => d.response_ms!)
-    
+      .filter((d: Device) => d.status === 'online' && typeof d.response_ms === 'number')
+      .map((d: Device) => d.response_ms as number)
     if (responseTimes.length === 0) return 0
-    return Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
+    return Math.round(responseTimes.reduce((a: number, b: number) => a + b, 0) / responseTimes.length)
   })
 
   // ============= Действия для устройств =============
@@ -112,16 +105,15 @@ export const usePingStore = defineStore('ping', () => {
       const configDevices = configResponse.devices || []
       
       // Преобразуем конфигурационные устройства в формат Device
-      const convertedDevices: Device[] = configDevices.map(configDevice => ({
-        id: configDevice.device_id,
+      const convertedDevices: Device[] = configDevices.map((configDevice: DeviceConfig) => ({
+        // локально сохраняем device_id в device_id, а числового id у конфиг-устройств нет
         device_id: configDevice.device_id,
         ip: configDevice.ip,
         description: configDevice.description,
         category: configDevice.category,
         status: 'unknown', // Будет обновлено при пинге
-        response_ms: null,
-        last_seen: null,
-        enabled: configDevice.enabled
+        response_ms: undefined,
+        last_check: undefined,
       }))
       
       devices.value = convertedDevices
@@ -152,7 +144,7 @@ export const usePingStore = defineStore('ping', () => {
   async function updateDevice(id: number, updates: Partial<Device>) {
     try {
       const updatedDevice = await deviceApi.update(id, updates)
-      const index = devices.value.findIndex(d => d.id === id)
+      const index = devices.value.findIndex((d: Device) => d.id === id)
       if (index !== -1) {
         devices.value[index] = updatedDevice
       }
@@ -167,7 +159,7 @@ export const usePingStore = defineStore('ping', () => {
   async function deleteDevice(id: number) {
     try {
       await deviceApi.delete(id)
-      devices.value = devices.value.filter(d => d.id !== id)
+      devices.value = devices.value.filter((d: Device) => d.id !== id)
     } catch (error) {
       console.error('Ошибка удаления устройства:', error)
       throw error
@@ -186,7 +178,7 @@ export const usePingStore = defineStore('ping', () => {
       
       // Обновляем статусы устройств на основе результатов пинга
       results.forEach(result => {
-        const device = devices.value.find(d => d.device_id === result.device_id)
+        const device = devices.value.find((d: Device) => d.device_id === result.device_id)
         if (device) {
           const oldStatus = device.status
           device.status = result.status as any
@@ -228,7 +220,7 @@ export const usePingStore = defineStore('ping', () => {
       const result = await pingApi.pingDevice(deviceKey)
       
       // Обновляем статус устройства
-      const device = devices.value.find(d => d.device_id === deviceKey || String(d.id) === deviceKey)
+      const device = devices.value.find((d: Device) => d.device_id === deviceKey || String(d.id) === deviceKey)
       if (device) {
         device.status = result.status as any
         device.response_ms = result.response_time
@@ -365,7 +357,7 @@ export const usePingStore = defineStore('ping', () => {
     // Подписываемся на события изменения статуса устройств
     eventStream.on('device_status', (event) => {
       const data = event.data || event
-      const device = devices.value.find(d => d.device_id === data.device_id)
+      const device = devices.value.find((d: Device) => d.device_id === data.device_id)
       if (device) {
         device.status = data.status
         device.response_ms = data.response_time
@@ -378,10 +370,9 @@ export const usePingStore = defineStore('ping', () => {
         type: data.status === 'online' ? 'recovery' : 'failure',
         device: data.device_id,
         ip: data.ip,
-        message: data.status === 'online' 
-          ? 'Устройство восстановлено' 
-          : 'Устройство недоступно',
-        timestamp: new Date().toLocaleString('ru-RU'),
+        message: data.status === 'online' ? 'Устройство восстановлено' : 'Устройство недоступно',
+        timestamp: new Date().toISOString(),
+        response_ms: data.response_time,
       })
 
       // Ограничиваем количество событий
@@ -563,21 +554,40 @@ export const usePingStore = defineStore('ping', () => {
     }
   }
 
+  // Загрузить историю статусов
+  async function loadStatusHistory(limit = 200) {
+    try {
+      const history = await eventsApi.getStatusHistory(limit)
+      // Преобразуем в recentEvents формат
+      recentEvents.value = history.map((h: StatusLogEntry) => ({
+        id: String(h.id),
+        type: h.status === 'online' ? 'recovery' : 'failure',
+        device: h.device_id,
+        ip: h.ip,
+        message: h.status === 'online' ? 'Устройство восстановлено' : 'Устройство недоступно',
+        timestamp: h.timestamp,
+        response_ms: h.response_ms,
+      }))
+    } catch (error) {
+      console.error('Ошибка загрузки истории статусов:', error)
+    }
+  }
+
   // ============= Утилиты =============
 
   // Получить устройство по ID
   function getDeviceById(id: number): Device | undefined {
-    return devices.value.find(d => d.id === id)
+    return devices.value.find((d: Device) => d.id === id)
   }
 
   // Получить устройства по категории
   function getDevicesByCategory(category: string): Device[] {
-    return devices.value.filter(d => d.category === category)
+    return devices.value.filter((d: Device) => d.category === category)
   }
 
   // Получить уникальные категории
   const categories = computed(() => {
-    const cats = new Set(devices.value.map(d => d.category))
+    const cats = new Set(devices.value.map((d: Device) => d.category))
     return Array.from(cats)
   })
 
@@ -599,6 +609,7 @@ export const usePingStore = defineStore('ping', () => {
       loadTelegramStatus(),
       loadFullConfig(),
     ])
+    await loadStatusHistory(200)
     connectToEventStream()
   }
 
@@ -657,6 +668,7 @@ export const usePingStore = defineStore('ping', () => {
     getCategoryDevices,
     addDevicesToCategory,
     loadAvailableDevices,
+    loadStatusHistory,
     reset,
     initialize,
   }
